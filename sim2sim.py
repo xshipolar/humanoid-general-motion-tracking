@@ -26,6 +26,7 @@ from collections import deque
 import torch
 
 from utils.motion_lib import MotionLib
+from tools.scale_mujoco_xml import scale_xml
 
 @torch.jit.script
 def quat_rotate_inverse(q, v):
@@ -88,7 +89,7 @@ def quatToEuler(quat):
     return eulerVec
 
 class HumanoidEnv:
-    def __init__(self, policy_path, motion_path, robot_type="g1", device="cuda", record_video=False):
+    def __init__(self, policy_path, motion_path, robot_type="g1", device="cuda", record_video=False, ctrl_scale = 1.0, model_path_override=None):
         self.robot_type = robot_type
         self.device = device
         self.record_video = record_video
@@ -132,8 +133,53 @@ class HumanoidEnv:
                               "left_shoulder_pitch", "left_shoulder_roll", "left_shoulder_yaw", "left_elbow",
                               "right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw", "right_elbow"]
 
+        elif robot_type == "g1_scaled":
+            # Use the scaled XML and increase stiffness/damping/torque limits to match larger mass/size
+            # model_path will be set after scale_xml is called in main
+            model_path = None
+            self.stiffness = np.array([
+                100, 100, 100, 150, 40, 40,
+                100, 100, 100, 150, 40, 40,
+                150, 150, 150,
+                40, 40, 40, 40,
+                40, 40, 40, 40,
+            ]) * ctrl_scale
+            self.damping = np.array([
+                2, 2, 2, 4, 2, 2,
+                2, 2, 2, 4, 2, 2,
+                4, 4, 4,
+                5, 5, 5, 5,
+                5, 5, 5, 5,
+            ]) * ctrl_scale
+            self.num_actions = 23
+            self.num_dofs = 23
+            # Joint nominal positions don't change with scaling
+            self.default_dof_pos = np.array([
+                -0.2, 0.0, 0.0, 0.4, -0.2, 0.0,
+                -0.2, 0.0, 0.0, 0.4, -0.2, 0.0,
+                0.0, 0.0, 0.0,
+                0.0, 0.4, 0.0, 1.2,
+                0.0, -0.4, 0.0, 1.2,
+            ])
+            self.torque_limits = np.array([
+                88, 139, 88, 139, 50, 50,
+                88, 139, 88, 139, 50, 50,
+                88, 50, 50,
+                25, 25, 25, 25,
+                25, 25, 25, 25,
+            ]) * ctrl_scale
+            self.dof_names = ["left_hip_pitch", "left_hip_roll", "left_hip_yaw", "left_knee", "left_ankle_pitch", "left_ankle_roll",
+                              "right_hip_pitch", "right_hip_roll", "right_hip_yaw", "right_knee", "right_ankle_pitch", "right_ankle_roll",
+                              "waist_yaw", "waist_roll", "waist_pitch",
+                              "left_shoulder_pitch", "left_shoulder_roll", "left_shoulder_yaw", "left_elbow",
+                              "right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw", "right_elbow"]
+
         else:
             raise ValueError(f"Robot type {robot_type} not supported!")
+        
+        # Override model_path if provided (e.g., dynamically scaled XML)
+        if model_path_override is not None:
+            model_path = model_path_override
         
         self.obs_indices = np.arange(self.num_dofs)
         
@@ -151,7 +197,11 @@ class HumanoidEnv:
             self.viewer = mujoco_viewer.MujocoViewer(self.model, self.data, 'offscreen')
         else:
             self.viewer = mujoco_viewer.MujocoViewer(self.model, self.data)
-        self.viewer.cam.distance = 5.0
+            # Increase camera distance for the scaled robot so the whole model is visible
+            if self.robot_type == "g1_scaled":
+                self.viewer.cam.distance = 20.0
+            else:
+                self.viewer.cam.distance = 5.0
         
         self.last_action = np.zeros(self.num_actions, dtype=np.float32)
         self.action_scale = 0.5
@@ -159,7 +209,7 @@ class HumanoidEnv:
         self.tar_obs_steps = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45,
                          50, 55, 60, 65, 70, 75, 80, 85, 90, 95,]
         
-        if robot_type == "g1":
+        if robot_type in ("g1", "g1_scaled"):
             self.n_priv = 0
             self.n_proprio = 3 + 2 + 3*self.num_actions
             self.n_priv_latent = 1
@@ -209,7 +259,7 @@ class HumanoidEnv:
         root_ang_vel = root_ang_vel.reshape(1, num_steps, 3)
         dof_pos = dof_pos.reshape(1, num_steps, -1)
         
-        if self.robot_type == "g1":
+        if self.robot_type in ("g1", "g1_scaled"):
             mimic_obs_buf = torch.cat((
                 root_pos[..., 2:3],
                 roll, pitch,
@@ -262,7 +312,7 @@ class HumanoidEnv:
                 assert obs_prop.shape[0] == self.n_proprio, f"Expected {self.n_proprio} but got {obs_prop.shape[0]}"
                 obs_hist = np.array(self.proprio_history_buf).flatten()
 
-                if self.robot_type == "g1":
+                if self.robot_type in ("g1", "g1_scaled"):
                     obs_buf = np.concatenate([mimic_obs, obs_prop, obs_hist])
                 
                 obs_tensor = torch.from_numpy(obs_buf).float().unsqueeze(0).to(self.device)
@@ -307,6 +357,9 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=int, default=-1)
     parser.add_argument('--record_video', action='store_true')
     parser.add_argument('--motion_file', type=str, default="walk_stand.pkl")
+    parser.add_argument('--scale', type=float, default=None, help="Scale factor for g1_scaled robot")
+    parser.add_argument('--mass_scale_alpha', type=float, default=3, help="Mass scale factor (i.e scale**alpha) for g1_scaled robot (default alpha=3)")
+    parser.add_argument('--ctrl_scale', type=float, default=None, help="Control scale for g1_scaled robot")
     args = parser.parse_args()
     
     jit_policy_pth = "assets/pretrained_checkpoints/pretrained.pt"
@@ -317,7 +370,28 @@ if __name__ == "__main__":
     
     motion_file = os.path.join("assets/motions", args.motion_file)
     
-    env = HumanoidEnv(policy_path=jit_policy_pth, motion_path=motion_file, robot_type=args.robot, device=device, record_video=args.record_video)
+    # Handle g1_scaled: generate scaled XML if scale is provided
+    model_path_override = None
+    if args.robot == "g1_scaled":
+        if args.scale is None:
+            raise ValueError("--scale parameter is required when using g1_scaled robot")
+        scaled_xml_path = f"assets/robots/g1/g1_scaled_{args.scale}.xml"
+        print(f"Scaling g1.xml by factor {args.scale} and saving to {scaled_xml_path}")
+        ctrl_scale = args.scale ** (args.mass_scale_alpha + 1) if args.ctrl_scale is None else args.ctrl_scale
+        scale_xml(
+            input_xml="assets/robots/g1/g1.xml",
+            output_xml=scaled_xml_path,
+            scale=args.scale,
+            mass_scale= args.scale ** args.mass_scale_alpha,
+            inertia_scale= args.scale ** (args.mass_scale_alpha + 2),
+            ctrl_scale= ctrl_scale,
+            add_mesh_scale=True
+        )
+        model_path_override = scaled_xml_path
+    
+        env = HumanoidEnv(policy_path=jit_policy_pth, motion_path=motion_file, robot_type=args.robot, device=device, record_video=args.record_video, ctrl_scale=ctrl_scale, model_path_override=model_path_override)
+    else:
+        env = HumanoidEnv(policy_path=jit_policy_pth, motion_path=motion_file, robot_type=args.robot, device=device, record_video=args.record_video)
     
     env.run()
         

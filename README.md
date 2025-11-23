@@ -1,39 +1,7 @@
-<h1 align="center">General Motion Tracking for <br> Humanoid Whole-Body Control</h1>
-
-
-<p align="center">
-    <a href="https://zixuan417.github.io/"><strong>Zixuan Chen<sup>*,1,2</sup></strong></a>
-    |
-    <a href="https://jimazeyu.github.io/"><strong>Mazeyu Ji<sup>*,1</sup></strong></a>
-    |
-    <a href="https://chengxuxin.github.io/"><strong>Xuxin Cheng<sup>1</sup></strong></a>
-    |
-    <a href="https://xuanbinpeng.github.io/"><strong>Xuanbin Peng<sup>1</sup></strong></a>
-    <br>
-    <a href="https://xbpeng.github.io/"><strong>Xue Bin Peng†<sup>2</sup></strong></a>
-    |
-    <a href="https://xiaolonw.github.io/"><strong>Xiaolong Wang†<sup>1</sup></strong></a>
-    <br>
-    <sup>1</sup> UC San Diego
-    &nbsp
-    <sup>2</sup> Simon Fraser University
-    <br>
-    * Equal Contribution
-    &nbsp
-    † Equal Advising
-</p>
-
-<p align="center">
-<h3 align="center"><a href="https://gmt-humanoid.github.io">Website</a> | <a href="https://arxiv.org/abs/2506.14770">arXiv</a> | <a href="https://youtu.be/n6p0DzpYjDE?si=6oIIx_Er36Ch7XWY">Video</a> </h3>
-<div align="center"></div>
-</p>
-
-<p align="center">
-<img src="./gmt-cover.jpeg" width="90%"/>
-</p>
+<h1 align="center">General Motion Tracking for Humanoid Whole-Body Control</h1>
 
 ## Overview
-This codebase supports Mujoco simulation of motion tracking on Unitree G1 robot. We provide a pretrained checkpoint and several example motions. This codebase is lightweight and easy to use. We have tested it both on Linux and M1 MacOS.
+This repository contains tools for motion tracking on humanoid robots using MuJoCo simulation. It is a fork adapted from the [original GMT repository](https://github.com/zixuan417/smooth-humanoid-locomotion) with extensions for scaled robot models and customizable control parameters.
 
 ## Installation && Running
 
@@ -45,13 +13,59 @@ pip install "numpy==1.23.0" pydelatin tqdm opencv-python ipdb imageio[ffmpeg] mu
 ```
 Then you can start to test the pretrained policy's performance on several example motions by running the following command:
 ```bash
-python sim2sim.py --robot g1 --motion walk_stand.pkl
+python sim2sim.py --robot g1 --motion_file walk_stand.pkl
 ```
 To change motions, you can replace `walk_stand.pkl` with other motions in the [motions](assets/motions/) folder.
 
 You can also view the kinematics motion by running:
 ```bash
-python view_motion.py --motion walk_stand.pkl
+python view_motion.py --motion_file walk_stand.pkl
+```
+
+## Scaled G1 Robot Usage
+
+This fork adds support for scaled robot models with customizable mass and control parameters. Use the `g1_scaled` robot type with various scaling options.
+
+### Basic Scaling
+
+**2x scaled robot with default mass/control scaling:**
+```bash
+python sim2sim.py --robot g1_scaled --scale 2.0 --motion_file walk_stand.pkl
+```
+
+### Advanced Scaling
+
+**Custom mass scaling exponent (default is 3, meaning mass scales as scale³):**
+```bash
+python sim2sim.py --robot g1_scaled --scale 2.0 --mass_scale_alpha 2.2 --motion_file walk_stand.pkl
+```
+
+**Custom control/force scaling (for actuator limits):**
+```bash
+python sim2sim.py --robot g1_scaled --scale 10.0 --ctrl_scale 800.0 --motion_file walk_stand.pkl
+```
+
+**All custom parameters combined:**
+```bash
+python sim2sim.py --robot g1_scaled --scale 10.0 --mass_scale_alpha 2.2 --ctrl_scale 800.0 --motion_file walk_stand.pkl
+```
+
+### Command-line Arguments
+
+- `--robot`: Robot type (`g1` or `g1_scaled`, default: `g1`)
+- `--motion_file`: Motion file name in `assets/motions/` (default: `walk_stand.pkl`)
+- `--scale`: Linear scale factor for `g1_scaled` (positions, sizes, mesh scale)
+- `--mass_scale_alpha`: Exponent for mass scaling: `mass_scale = scale**alpha` (default: `3`)
+- `--ctrl_scale`: Control/force scaling factor for `g1_scaled` (scales `ctrlrange` and `actuatorfrcrrange`)
+- `--record_video`: Save simulation as MP4 video in `mujoco_videos/` directory
+- `--checkpoint`: Checkpoint index (default: `-1`)
+
+### Video Recording
+
+Record simulations with or without scaling:
+```bash
+python sim2sim.py --robot g1 --motion_file walk_stand.pkl --record_video
+python sim2sim.py --robot g1_scaled --scale 2.0 --motion_file walk_stand.pkl --record_video
 ```
 
 ## ‼️Alert & Disclaimer
